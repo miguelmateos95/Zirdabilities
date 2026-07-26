@@ -1,27 +1,26 @@
 # ==============================================================================
 # BASE DE DATOS COMPLETA DE CARTAS (ZIRDA SIMULATION)
-# Contiene tanto la base previa del motor como las nuevas cartas incorporadas.
 # ==============================================================================
 
 CARDS_DATABASE = {
     # --------------------------------------------------------------------------
-    # 1. PIEZAS CORE DEL COMBO (EXISTENTES)
+    # 1. PIEZAS CORE DEL COMBO Y BASE PREVIA
     # --------------------------------------------------------------------------
     "Basalt Monolith": {
         "cost": "3",
         "type": "artifact",
         "is_monolith": True,
         "mana_produced": 3,
-        "untap_cost": 3,  # Se reduce a 1 con Zirda en mesa -> Genera mana infinito
+        "untap_cost": 3,
     },
     "Grim Monolith": {
         "cost": "2",
         "type": "artifact",
         "is_monolith": True,
         "mana_produced": 3,
-        "untap_cost": 4,  # Se reduce a 2 con Zirda en mesa -> Genera mana infinito
+        "untap_cost": 4,
     },
-    "Monolith": {  # Alias genérico para soporte del motor
+    "Monolith": {
         "cost": "3",
         "type": "artifact",
         "is_monolith": True,
@@ -72,16 +71,16 @@ CARDS_DATABASE = {
     "Abstergo Entertainment": {
         "type": "land",
         "produces": ["C"],
-        "filter_ability": True  # Lógica: Genera 1C o filtra 1C -> 1R/1W
+        "filter_ability": True
     },
     "Spire of Industry": {
         "type": "land",
-        "produces_conditional": lambda state: ["R", "W"] if state.artifacts_count > 0 else ["C"]
+        "produces_conditional": lambda state: ["R", "W"] if getattr(state, 'artifacts_count', 0) > 0 else ["C"]
     },
     "Inventors' Fair": {
         "type": "land",
         "produces": ["C"],
-        "can_tutor_artifact": lambda state: state.artifacts_count >= 3
+        "can_tutor_artifact": lambda state: getattr(state, 'artifacts_count', 0) >= 3
     },
 
     # --------------------------------------------------------------------------
@@ -90,7 +89,7 @@ CARDS_DATABASE = {
     "_____ Goblin": {
         "cost": "2R",
         "type": "ritual",
-        "mana_added": {"R": 5}  # Media configurada
+        "mana_added": {"R": 5}
     },
     "Treasonous Ogre": {
         "cost": "3R",
@@ -101,13 +100,13 @@ CARDS_DATABASE = {
         "cost": "0",
         "type": "artifact",
         "is_led": True,
-        "cast_condition": lambda state: state.has_monolith_and_outlet_in_play()
+        "cast_condition": lambda state: getattr(state, 'has_monolith_and_outlet_in_play', lambda: False)()
     },
     "Kozilek's Command": {"cost": "XCC", "type": "instant", "is_outlet": True},
     "Thran Spider": {"cost": "3", "type": "artifact_creature", "is_outlet": True, "activated_ability_cost": "7"},
     
     # --------------------------------------------------------------------------
-    # 4. SINTERGIA DE ARTEFACTOS Y MOTOR DE ROBOS
+    # 4. SINERGIA DE ARTEFACTOS Y MOTOR DE ROBOS
     # --------------------------------------------------------------------------
     "Rings of Brighthearth": {"cost": "3", "type": "artifact", "combo_piece": True},
     "Manifold Key": {"cost": "1", "type": "artifact", "untap_synergy": True},
@@ -155,10 +154,9 @@ CARDS_DATABASE = {
 }
 
 
-def get_card_info(card_name):
-    """
-    Función de búsqueda rápida en el motor.
-    Si una carta no está explícitamente en el diccionario, se devuelve como 'OTHER'
-    para evitar detención de ejecución.
-    """
+def get_card(card_name):
+    """Busca la carta en la base de datos; si no la encuentra devuelve tipo 'other'."""
     return CARDS_DATABASE.get(card_name, {"cost": "1", "type": "other"})
+
+# Alias por compatibilidad
+get_card_info = get_card
