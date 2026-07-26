@@ -33,7 +33,7 @@ class GameState:
         )
 
 
-class Game:
+class GameEngine:
 
     def __init__(self, deck, max_mulligans=2):
         self.deck = deck
@@ -266,5 +266,6 @@ class Game:
         return False
 
 
-# Alias por compatibilidad
-Engine = Game
+# Aliases por compatibilidad con cualquier tipo de importación
+Game = GameEngine
+Engine = GameEngine
