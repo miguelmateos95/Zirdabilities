@@ -26,8 +26,12 @@ def run_monte_carlo(iterations=100000):
     start_time = time.time()
 
     for i in range(iterations):
-        record = i < 5 or (iterations - i) <= 5
-        engine = GameEngine(deck, debug=record)
+        # Solo grabamos log detallado mientras no tengamos 5 muestras ganadoras y 5 perdedoras
+        need_win_sample = len(winning_samples) < 5
+        need_loss_sample = len(losing_samples) < 5
+        record = need_win_sample or need_loss_sample
+
+        engine = GameEngine(deck, max_mulligans=2, record_log=record)
         mulls = engine.mulligans
         mulligan_counts[mulls] = mulligan_counts.get(mulls, 0) + 1
 
@@ -66,23 +70,29 @@ def run_monte_carlo(iterations=100000):
     print("=" * 65)
 
     # Muestras de Ganadoras
-    print("\n🟢 5 SAMPLE WINNING HANDS 🟢\n")
+    print("\n🟢 5 SAMPLE WINNING HANDS (DETAILED LOGS) 🟢\n")
     for engine, idx, reason in winning_samples:
         hand_names = [getattr(c, "name", str(c)) for c in engine.state.hand]
         board_names = [getattr(c, "name", str(c)) for c in engine.state.battlefield]
         print(f"--- [WINNING GAME #{idx}] ---")
         print(f"  Mulligans: {engine.mulligans}")
+        print("  📜 SECUENCIA PASO A PASO:")
+        for line in engine.logs:
+            print(f"    {line}")
         print(f"  Mano Restante: {hand_names}")
         print(f"  Board State Final: {board_names}")
         print(f"  ✅ RESULTADO: {reason}\n")
 
     # Muestras de Perdedoras
-    print("\n🔴 5 SAMPLE LOSING HANDS 🔴\n")
+    print("\n🔴 5 SAMPLE LOSING HANDS (DETAILED LOGS) 🔴\n")
     for engine, idx, reason in losing_samples:
         hand_names = [getattr(c, "name", str(c)) for c in engine.state.hand]
         board_names = [getattr(c, "name", str(c)) for c in engine.state.battlefield]
         print(f"--- [LOSING GAME #{idx}] ---")
         print(f"  Mulligans: {engine.mulligans}")
+        print("  📜 SECUENCIA PASO A PASO:")
+        for line in engine.logs:
+            print(f"    {line}")
         print(f"  Mano Restante: {hand_names}")
         print(f"  Board State Final: {board_names}")
         print(f"  ❌ RESULTADO: {reason}\n")
