@@ -1,273 +1,270 @@
+# ==============================================================================
+# MOTOR DE JUEGO, LÓGICA DE DECISIÓN Y LONDON MULLIGAN (ZIRDA SIMULATOR)
+# ==============================================================================
+
 import random
-from src.card import Card
-from src.database import get_card
-from src.deck import Deck
-
-DISCARD_PRIORITY = [
-    "OTHER",
-    "Aurelia's Fury",
-    "Apple of Eden, Isu Relic",
-    "Staff of Compleation",
-    "Staff of Domination",
-    "Cogwork Assembler",
-    "Walking Ballista",
-    "Seething Song",
-    "Jeska's Will",
-    "Desperate Ritual",
-    "Pyretic Ritual",
-    "Rite of Flame",
-    "COLOR_LAND",
-    "Urza's Saga",
-    "City of Traitors",
-    "Ancient Tomb",
-    "Mishra's Workshop",
-    "Gemstone Caverns",
-    "Arcane Signet",
-    "Talisman of Conviction",
-    "Simian Spirit Guide",
-    "Lotus Petal",
-    "Mox Opal",
-    "Mox Diamond",
-    "Chrome Mox",
-    "Tezzeret, Cruel Captain",
-    "Reckless Handling",
-    "Moonsilver Key",
-    "Gamble",
-    "Enlightened Tutor",
-    "Mana Vault",
-    "Sol Ring",
-    "Grim Monolith",
-    "Basalt Monolith",
-]
 
 
-class GameEngine:
-    """Motor de simulación paso a paso para evaluar el combo de Zirda en Turno 2."""
+class GameState:
 
-    def __init__(self, deck: Deck, debug: bool = False):
-        self.raw_deck = list(deck.get_cards())
-        self.debug = debug
-        self.log = []
+    def __init__(self, hand, deck_cards):
+        self.hand = list(hand)
+        self.library = list(deck_cards)
+        self.battlefield = []
+        self.graveyard = []
+        self.mana_pool = {"C": 0, "R": 0, "W": 0, "generic": 0}
+        self.lands_played_this_turn = 0
+        self.zirda_in_command_zone = True
+        self.zirda_on_battlefield = False
 
-    def trace(self, msg: str):
-        if self.debug:
-            self.log.append(msg)
+    def reset_mana(self):
+        self.mana_pool = {"C": 0, "R": 0, "W": 0, "generic": 0}
 
-    def apply_london_mulligan(
-        self, hand: list[Card], num_discards: int
-    ) -> list[Card]:
-        if num_discards == 0:
-            return hand
+    def total_mana(self):
+        return sum(self.mana_pool.values())
 
-        def get_priority(card: Card) -> int:
-            if card.name in DISCARD_PRIORITY:
-                return DISCARD_PRIORITY.index(card.name)
-            return 0
+    @property
+    def artifacts_count(self):
+        return sum(
+            1
+            for card in self.battlefield
+            if getattr(card, "is_artifact", False)
+            or getattr(card, "type", "") == "artifact"
+        )
 
-        sorted_hand = sorted(hand, key=get_priority)
-        return sorted_hand[num_discards:]
 
-    def run_simulation(self) -> tuple[bool, str]:
-        deck_cards = list(self.raw_deck)
-        random.shuffle(deck_cards)
+class Game:
 
-        opening_7 = [deck_cards.pop() for _ in range(7)]
+    def __init__(self, deck, max_mulligans=2):
+        self.deck = deck
+        self.mulligans = 0
+        self.state = None
+        self._setup_hand_with_london_mulligan(max_mulligans)
 
-        for mulligan_cnt in range(3):
-            self.log = []
-            hand = self.apply_london_mulligan(list(opening_7), mulligan_cnt)
-            board = []
-            library = list(deck_cards)
+    def _is_keepable_hand(self, hand):
+        """Criterio cEDH para evaluar si se conserva la mano."""
+        lands = [
+            c
+            for c in hand
+            if getattr(c, "role", "") == "LAND"
+            or getattr(c, "type", "") == "land"
+        ]
+        fast_mana = [
+            c
+            for c in hand
+            if getattr(c, "role", "") in ["FAST_MANA", "MANA_ROCK", "RITUAL"]
+        ]
+        monoliths = [c for c in hand if getattr(c, "is_monolith", False)]
+        tutors_or_outlets = [
+            c
+            for c in hand
+            if getattr(c, "is_outlet", False)
+            or getattr(c, "tutor_artifact", False)
+            or getattr(c, "name", "")
+            in ["Enlightened Tutor", "Gamble", "Imperial Recruiter"]
+        ]
 
-            self.trace(f"\n--- INICIO DE PARTIDA (Mulligans: {mulligan_cnt}) ---")
-            self.trace(f"Mano Inicial: {[c.name for c in hand]}")
+        # 1. Al menos 1 fuente de maná
+        if len(lands) + len(fast_mana) < 1:
+            return False
 
-            # --- FASE PREGAME ---
-            gemstone = next(
-                (c for c in hand if c.name == "Gemstone Caverns"), None
-            )
-            if gemstone and random.random() < 0.75:
-                other = next(
-                    (
-                        c
-                        for c in hand
-                        if c.role == "Other" or c.name == "OTHER"
-                    ),
-                    None,
-                )
-                if other:
-                    hand.remove(other)
-                    hand.remove(gemstone)
-                    board.append(gemstone)
-                    self.trace(
-                        f"Pregame: Play Gemstone Caverns (Exilada {other.name})"
+        # 2. Presencia de pieza de combo o aceleración fuerte
+        if monoliths:
+            return True
+        if len(fast_mana) >= 2 and tutors_or_outlets:
+            return True
+        if len(lands) >= 2 and (fast_mana or tutors_or_outlets):
+            return True
+
+        return False
+
+    def _setup_hand_with_london_mulligan(self, max_mulligans):
+        """Aplica las reglas del London Mulligan oficial de Magic."""
+        cards = self.deck.get_cards()
+
+        for mull_count in range(max_mulligans + 1):
+            random.shuffle(cards)
+            drawn_hand = cards[:7]
+            remaining_library = cards[7:]
+
+            if self._is_keepable_hand(drawn_hand) or mull_count == max_mulligans:
+                self.mulligans = mull_count
+
+                if mull_count > 0:
+                    # Priorización de descarte: retener piezas claves, descartar 'OTHER'
+                    drawn_hand.sort(
+                        key=lambda c: 0
+                        if getattr(c, "is_monolith", False)
+                        or getattr(c, "is_outlet", False)
+                        else (
+                            1
+                            if getattr(c, "role", "") in ["LAND", "FAST_MANA"]
+                            else 2
+                        )
                     )
-
-            # --- TURNO 1 (T1) ---
-            lands_t1 = [c for c in hand if c.role == "Land"]
-            if lands_t1:
-                chosen_land = lands_t1[0]
-                for l in lands_t1:
-                    if l.name in [
-                        "COLOR_LAND",
-                        "Mishra's Workshop",
-                        "Ancient Tomb",
-                    ]:
-                        chosen_land = l
-                        break
-                hand.remove(chosen_land)
-                board.append(chosen_land)
-                self.trace(f"T1 Land Drop: Play {chosen_land.name}")
-
-            # Acciones / Casts de T1
-            gamble = next((c for c in hand if c.name == "Gamble"), None)
-            if gamble:
-                has_red_t1 = any(
-                    c.name in ["COLOR_LAND", "Gemstone Caverns"] for c in board
-                )
-                if has_red_t1:
-                    hand.remove(gamble)
-                    grim = get_card("Grim Monolith")
-                    hand.append(grim)
-
-                    discarded = random.choice(hand)
-                    hand.remove(discarded)
-                    self.trace(
-                        f"T1 Action: Cast Gamble ({gamble.cost_pips}) -> Busca Grim Monolith y descarta al azar: {discarded.name}"
-                    )
-
-            # --- TURNO 2 (T2) ---
-            if library:
-                drawn = library.pop()
-                hand.append(drawn)
-                self.trace(f"T2 Draw Step: Robada {drawn.name}")
-
-            lands_t2 = [c for c in hand if c.role == "Land"]
-            if lands_t2:
-                chosen_t2 = lands_t2[0]
-                board.append(chosen_t2)
-                hand.remove(chosen_t2)
-                self.trace(f"T2 Land Drop: Play {chosen_t2.name}")
-
-            self.trace(f"Mano al inicio de T2: {[c.name for c in hand]}")
-
-            # --- SECUENCIADOR Y CASTS DE T2 ---
-            pool_r = sum(
-                1
-                for c in board
-                if c.name
-                in [
-                    "COLOR_LAND",
-                    "Gemstone Caverns",
-                    "Arcane Signet",
-                    "Talisman of Conviction",
-                    "Chrome Mox",
-                    "Mox Diamond",
-                    "Mox Opal",
-                ]
-            )
-            pool_c = sum(
-                3
-                if c.name in ["Sol Ring", "Mana Vault", "Grim Monolith"]
-                else 2
-                if c.name in ["Ancient Tomb", "City of Traitors"]
-                else 1
-                for c in board
-                if c.name != "Mishra's Workshop"
-            )
-
-            # 1. Ephemeral & Fast Mana
-            petal = next((c for c in hand if c.name == "Lotus Petal"), None)
-            if petal:
-                hand.remove(petal)
-                pool_r += 1
-                self.trace("T2 Action: Cast Lotus Petal (Coste: {0}) -> Sacrifica (+1 Mana Color)")
-
-            ssg = next((c for c in hand if c.name == "Simian Spirit Guide"), None)
-            if ssg:
-                hand.remove(ssg)
-                pool_r += 1
-                self.trace("T2 Action: Exile Simian Spirit Guide de la mano (+1 Rojo)")
-
-            # 2. Casts de Rituales
-            seething = next((c for c in hand if c.name == "Seething Song"), None)
-            if seething and pool_r >= 1 and (pool_r + pool_c) >= 3:
-                hand.remove(seething)
-                if pool_c >= 2:
-                    pool_c -= 2
-                    pool_r -= 1
+                    bottom_cards = drawn_hand[-mull_count:]
+                    final_hand = drawn_hand[:-mull_count]
+                    remaining_library.extend(bottom_cards)
                 else:
-                    rem = 2 - pool_c
-                    pool_c = 0
-                    pool_r -= 1 + rem
-                pool_r += 5
-                self.trace("T2 Action: Cast Seething Song (Coste: {2}{R}) -> Genera +5{R}")
+                    final_hand = drawn_hand
 
-            pyretic = next(
-                (
-                    c
-                    for c in hand
-                    if c.name in ["Pyretic Ritual", "Desperate Ritual"]
-                ),
-                None,
-            )
-            if pyretic and pool_r >= 1 and (pool_r + pool_c) >= 2:
-                hand.remove(pyretic)
-                if pool_c >= 1:
-                    pool_c -= 1
-                    pool_r -= 1
+                self.state = GameState(final_hand, remaining_library)
+                break
+
+    def draw_card(self):
+        if self.state.library:
+            card = self.state.library.pop(0)
+            self.state.hand.append(card)
+
+    def execute_turn(self, turn_number):
+        self.state.lands_played_this_turn = 0
+        self.state.reset_mana()
+
+        # Robo de carta en T2+
+        if turn_number > 1:
+            self.draw_card()
+
+        # Secuencia del turno
+        self._tap_board_for_mana()
+        self._play_land()
+        self._play_fast_mana_and_rituals()
+        self._play_combo_pieces()
+
+    def _tap_board_for_mana(self):
+        for card in self.state.battlefield:
+            if getattr(card, "type", "") == "land":
+                produces = getattr(card, "produces", ["C"])
+                if "R" in produces:
+                    self.state.mana_pool["R"] += 1
+                elif "W" in produces:
+                    self.state.mana_pool["W"] += 1
                 else:
-                    pool_r -= 2
-                pool_r += 3
-                self.trace(f"T2 Action: Cast {pyretic.name} (Coste: {{1}}{{R}}) -> Genera +3{{R}}")
+                    self.state.mana_pool["C"] += 1
 
-            # 3. Casts de Monolito
-            monolith_in_play = any(
-                c.name in ["Basalt Monolith", "Grim Monolith"] for c in board
-            )
+            elif getattr(card, "role", "") in ["FAST_MANA", "MANA_ROCK"]:
+                mana_added = getattr(card, "mana_added", {})
+                for k, v in mana_added.items():
+                    if k in self.state.mana_pool:
+                        self.state.mana_pool[k] += v
+                    else:
+                        self.state.mana_pool["C"] += v
 
-            if not monolith_in_play:
-                basalt = next(
-                    (c for c in hand if c.name == "Basalt Monolith"), None
-                )
-                grim = next((c for c in hand if c.name == "Grim Monolith"), None)
+    def _play_land(self):
+        if self.state.lands_played_this_turn >= 1:
+            return
 
-                if grim and (pool_r + pool_c) >= 2:
-                    hand.remove(grim)
-                    board.append(grim)
-                    pool_c += 3
-                    monolith_in_play = True
-                    self.trace(
-                        "T2 Action: Cast Grim Monolith (Coste: {2}) -> Tapea para +3{C}"
-                    )
-                elif basalt and (pool_r + pool_c) >= 3:
-                    hand.remove(basalt)
-                    board.append(basalt)
-                    pool_c += 3
-                    monolith_in_play = True
-                    self.trace(
-                        "T2 Action: Cast Basalt Monolith (Coste: {3}) -> Tapea para +3{C}"
-                    )
+        lands_in_hand = [
+            c
+            for c in self.state.hand
+            if getattr(c, "role", "") == "LAND"
+            or getattr(c, "type", "") == "land"
+        ]
+        if not lands_in_hand:
+            return
 
-            # 4. Cast de Comandante (Zirda)
-            zirda_ready = False
-            if monolith_in_play and pool_r >= 2 and (pool_r + pool_c) >= 3:
-                zirda_ready = True
-                self.trace("T2 Action: Cast Zirda, the Dawnwaker desde la Command Zone (Coste: {1}{R/W}{R/W})")
+        selected_land = lands_in_hand[0]
+        for land in lands_in_hand:
+            if any(
+                color in getattr(land, "produces", []) for color in ["R", "W"]
+            ):
+                selected_land = land
+                break
 
-            # 5. Cast de Rematador (Outlet)
-            outlet_card = next((c for c in hand if c.role == "Outlet"), None)
+        self.state.hand.remove(selected_land)
+        self.state.battlefield.append(selected_land)
+        self.state.lands_played_this_turn += 1
 
-            if zirda_ready and monolith_in_play and outlet_card:
-                self.trace(f"T2 Action: Cast {outlet_card.name} (Outlet) -> Ejecuta maná infinito con Monolito")
-                self.trace(f"Board State Final: {[c.name for c in board]}")
-                self.trace(f"Mano Restante: {[c.name for c in hand]}")
-                self.trace("🏆 RESULTADO: VICTORIA EN TURNO 2")
-                return True, f"T2 Win (Mulligan {mulligan_cnt})"
+        produces = getattr(selected_land, "produces", ["C"])
+        if "R" in produces:
+            self.state.mana_pool["R"] += 1
+        elif "W" in produces:
+            self.state.mana_pool["W"] += 1
+        else:
+            self.state.mana_pool["C"] += 1
 
-            # Registro en caso de fallo
-            self.trace(f"Board State Final: {[c.name for c in board]}")
-            self.trace(f"Mano Restante: {[c.name for c in hand]}")
-            self.trace("❌ RESULTADO: FALLO EN TURNO 2")
+    def _play_fast_mana_and_rituals(self):
+        playable = True
+        while playable:
+            playable = False
+            for card in list(self.state.hand):
+                if getattr(card, "role", "") == "FAST_MANA":
+                    cost = 1 if getattr(card, "cost", "0") == "1" else 0
+                    if self.state.total_mana() >= cost:
+                        self.state.hand.remove(card)
+                        self.state.battlefield.append(card)
+                        added = getattr(card, "mana_added", {"C": 2})
+                        for k, v in added.items():
+                            if k in self.state.mana_pool:
+                                self.state.mana_pool[k] += v
+                            else:
+                                self.state.mana_pool["C"] += v
+                        playable = True
 
-        return False, "T2 Fail"
+                elif getattr(card, "role", "") == "RITUAL":
+                    name = getattr(card, "name", "")
+                    if name == "Rite of Flame" and self.state.mana_pool["R"] >= 1:
+                        self.state.mana_pool["R"] += 1
+                        self.state.hand.remove(card)
+                        self.state.graveyard.append(card)
+                        playable = True
+                    elif (
+                        name == "_____ Goblin"
+                        and self.state.total_mana() >= 3
+                        and self.state.mana_pool["R"] >= 1
+                    ):
+                        self.state.mana_pool["R"] += 3
+                        self.state.hand.remove(card)
+                        self.state.graveyard.append(card)
+                        playable = True
+
+    def _play_combo_pieces(self):
+        # 1. Monolito
+        monoliths = [
+            c for c in self.state.hand if getattr(c, "is_monolith", False)
+        ]
+        for mon in monoliths:
+            cost = 3 if getattr(mon, "name", "") == "Basalt Monolith" else 2
+            if self.state.total_mana() >= cost:
+                self.state.hand.remove(mon)
+                self.state.battlefield.append(mon)
+                break
+
+        # 2. Zirda desde la Zona de Comandante (1RW)
+        has_monolith = any(
+            getattr(c, "is_monolith", False) for c in self.state.battlefield
+        )
+        if has_monolith and self.state.zirda_in_command_zone:
+            if self.state.total_mana() >= 3 and (
+                self.state.mana_pool["R"] >= 1 or self.state.mana_pool["W"] >= 1
+            ):
+                self.state.zirda_in_command_zone = False
+                self.state.zirda_on_battlefield = True
+
+        # 3. Outlet
+        outlets = [c for c in self.state.hand if getattr(c, "is_outlet", False)]
+        for out in outlets:
+            if self.state.total_mana() >= 1:
+                self.state.hand.remove(out)
+                self.state.battlefield.append(out)
+                break
+
+    def check_win(self):
+        """Condición de victoria del combo infinito."""
+        has_monolith = any(
+            getattr(c, "is_monolith", False) for c in self.state.battlefield
+        )
+        has_outlet = any(
+            getattr(c, "is_outlet", False) for c in self.state.battlefield
+        )
+        return has_monolith and self.state.zirda_on_battlefield and has_outlet
+
+    def run_simulation(self, max_turns=2):
+        for turn in range(1, max_turns + 1):
+            self.execute_turn(turn)
+            if self.check_win():
+                return True
+        return False
+
+
+# Alias por compatibilidad
+Engine = Game
