@@ -35,13 +35,19 @@ class GameState:
 
 class GameEngine:
 
-    def __init__(self, deck, max_mulligans=2, debug=False, *args, **kwargs):
+    def __init__(self, deck, max_mulligans=2, record_log=False, *args, **kwargs):
         self.deck = deck
         self.max_mulligans = max_mulligans
-        self.debug = debug
+        self.record_log = record_log
         self.mulligans = 0
         self.state = None
+        self.logs = []  # Historial de acciones
         self._setup_hand_with_london_mulligan(self.max_mulligans)
+
+    def log(self, message):
+        """Acumula logs solo si la grabación está activada para esta partida."""
+        if self.record_log:
+            self.logs.append(message)
 
     def _is_keepable_hand(self, hand):
         """Criterio cEDH para evaluar si se conserva la mano."""
@@ -89,11 +95,13 @@ class GameEngine:
             drawn_hand = cards[:7]
             remaining_library = cards[7:]
 
+            hand_names = [getattr(c, "name", str(c)) for c in drawn_hand]
+            self.log(f"[PREGAME] Intento #{mull_count + 1} (7 cartas): {hand_names}")
+
             if self._is_keepable_hand(drawn_hand) or mull_count == max_mulligans:
                 self.mulligans = mull_count
 
                 if mull_count > 0:
-                    # Retener piezas claves, descartar 'OTHER'
                     drawn_hand.sort(
                         key=lambda c: 0
                         if getattr(c, "is_monolith", False)
@@ -107,8 +115,15 @@ class GameEngine:
                     bottom_cards = drawn_hand[-mull_count:]
                     final_hand = drawn_hand[:-mull_count]
                     remaining_library.extend(bottom_cards)
+
+                    bottom_names = [getattr(c, "name", str(c)) for c in bottom_cards]
+                    self.log(f"[PREGAME] Decision: MULLIGAN a {7 - mull_count}. Cartas enviadas al fondo: {bottom_names}")
                 else:
                     final_hand = drawn_hand
+                    self.log("[PREGAME] Decision: KEEP (Mano aceptada).")
+
+                final_hand_names = [getattr(c, "name", str(c)) for c in final_hand]
+                self.log(f"[PREGAME] Mano inicial final ({len(final_hand)} cartas): {final_hand_names}")
 
                 self.state = GameState(final_hand, remaining_library)
                 break
@@ -117,8 +132,11 @@ class GameEngine:
         if self.state.library:
             card = self.state.library.pop(0)
             self.state.hand.append(card)
+            card_name = getattr(card, "name", str(card))
+            self.log(f"  • [ROBO] Robas '{card_name}' de la biblioteca.")
 
     def execute_turn(self, turn_number):
+        self.log(f"\n  --- 🕒 TURNO {turn_number} ---")
         self.state.lands_played_this_turn = 0
         self.state.reset_mana()
 
@@ -133,15 +151,22 @@ class GameEngine:
         self._play_combo_pieces()
 
     def _tap_board_for_mana(self):
+        if not self.state.battlefield:
+            return
+
         for card in self.state.battlefield:
+            c_name = getattr(card, "name", str(card))
             if getattr(card, "type", "") == "land":
                 produces = getattr(card, "produces", ["C"])
                 if "R" in produces:
                     self.state.mana_pool["R"] += 1
+                    self.log(f"  • [MANA] Giras {c_name} -> +1R")
                 elif "W" in produces:
                     self.state.mana_pool["W"] += 1
+                    self.log(f"  • [MANA] Giras {c_name} -> +1W")
                 else:
                     self.state.mana_pool["C"] += 1
+                    self.log(f"  • [MANA] Giras {c_name} -> +1C")
 
             elif getattr(card, "role", "") in ["FAST_MANA", "MANA_ROCK"]:
                 mana_added = getattr(card, "mana_added", {})
@@ -150,6 +175,7 @@ class GameEngine:
                         self.state.mana_pool[k] += v
                     else:
                         self.state.mana_pool["C"] += v
+                self.log(f"  • [MANA] Giras {c_name} -> Genera maná de roca ({mana_added})")
 
     def _play_land(self):
         if self.state.lands_played_this_turn >= 1:
@@ -176,6 +202,7 @@ class GameEngine:
         self.state.battlefield.append(selected_land)
         self.state.lands_played_this_turn += 1
 
+        land_name = getattr(selected_land, "name", str(selected_land))
         produces = getattr(selected_land, "produces", ["C"])
         if "R" in produces:
             self.state.mana_pool["R"] += 1
@@ -184,11 +211,14 @@ class GameEngine:
         else:
             self.state.mana_pool["C"] += 1
 
+        self.log(f"  • [LAND] Juegas tierra '{land_name}'. Pool maná libre: {dict(self.state.mana_pool)}")
+
     def _play_fast_mana_and_rituals(self):
         playable = True
         while playable:
             playable = False
             for card in list(self.state.hand):
+                c_name = getattr(card, "name", str(card))
                 if getattr(card, "role", "") == "FAST_MANA":
                     cost = 1 if getattr(card, "cost", "0") == "1" else 0
                     if self.state.total_mana() >= cost:
@@ -200,23 +230,25 @@ class GameEngine:
                                 self.state.mana_pool[k] += v
                             else:
                                 self.state.mana_pool["C"] += v
+                        self.log(f"  • [CAST] Casteas '{c_name}'. Pool maná actual: {dict(self.state.mana_pool)}")
                         playable = True
 
                 elif getattr(card, "role", "") == "RITUAL":
-                    name = getattr(card, "name", "")
-                    if name == "Rite of Flame" and self.state.mana_pool["R"] >= 1:
+                    if c_name == "Rite of Flame" and self.state.mana_pool["R"] >= 1:
                         self.state.mana_pool["R"] += 1
                         self.state.hand.remove(card)
                         self.state.graveyard.append(card)
+                        self.log(f"  • [RITUAL] Casteas Rite of Flame. Pool maná actual: {dict(self.state.mana_pool)}")
                         playable = True
                     elif (
-                        name == "_____ Goblin"
+                        c_name == "_____ Goblin"
                         and self.state.total_mana() >= 3
                         and self.state.mana_pool["R"] >= 1
                     ):
                         self.state.mana_pool["R"] += 3
                         self.state.hand.remove(card)
                         self.state.graveyard.append(card)
+                        self.log(f"  • [RITUAL] Casteas _____ Goblin (+3 Red Mana). Pool maná actual: {dict(self.state.mana_pool)}")
                         playable = True
 
     def _play_combo_pieces(self):
@@ -225,10 +257,12 @@ class GameEngine:
             c for c in self.state.hand if getattr(c, "is_monolith", False)
         ]
         for mon in monoliths:
-            cost = 3 if getattr(mon, "name", "") == "Basalt Monolith" else 2
+            m_name = getattr(mon, "name", str(mon))
+            cost = 3 if m_name == "Basalt Monolith" else 2
             if self.state.total_mana() >= cost:
                 self.state.hand.remove(mon)
                 self.state.battlefield.append(mon)
+                self.log(f"  • [CAST] Casteas Monolito '{m_name}' (Coste: {cost}).")
                 break
 
         # 2. Zirda desde la Zona de Comandante (1RW)
@@ -241,13 +275,16 @@ class GameEngine:
             ):
                 self.state.zirda_in_command_zone = False
                 self.state.zirda_on_battlefield = True
+                self.log("  • [COMMAND ZONE] Casteas a Zirda, the Dawnwaker como Comandante.")
 
         # 3. Outlet
         outlets = [c for c in self.state.hand if getattr(c, "is_outlet", False)]
         for out in outlets:
+            o_name = getattr(out, "name", str(out))
             if self.state.total_mana() >= 1:
                 self.state.hand.remove(out)
                 self.state.battlefield.append(out)
+                self.log(f"  • [CAST] Casteas Outlet de victoria '{o_name}'.")
                 break
 
     def check_win(self):
@@ -258,7 +295,10 @@ class GameEngine:
         has_outlet = any(
             getattr(c, "is_outlet", False) for c in self.state.battlefield
         )
-        return has_monolith and self.state.zirda_on_battlefield and has_outlet
+        win = has_monolith and self.state.zirda_on_battlefield and has_outlet
+        if win:
+            self.log("  ⚡ [COMBO] Monolito + Zirda + Outlet integrados en mesa -> ¡COMBO INFINITO COMPLETADO!")
+        return win
 
     def run_simulation(self, max_turns=2):
         """Retorna tupla (éxito: bool, razón: str) esperada por main.py"""
