@@ -35,11 +35,13 @@ class GameState:
 
 class GameEngine:
 
-    def __init__(self, deck, max_mulligans=2):
+    def __init__(self, deck, max_mulligans=2, debug=False, *args, **kwargs):
         self.deck = deck
+        self.max_mulligans = max_mulligans
+        self.debug = debug
         self.mulligans = 0
         self.state = None
-        self._setup_hand_with_london_mulligan(max_mulligans)
+        self._setup_hand_with_london_mulligan(self.max_mulligans)
 
     def _is_keepable_hand(self, hand):
         """Criterio cEDH para evaluar si se conserva la mano."""
