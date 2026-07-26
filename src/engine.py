@@ -93,7 +93,7 @@ class GameEngine:
                 self.mulligans = mull_count
 
                 if mull_count > 0:
-                    # Priorización de descarte: retener piezas claves, descartar 'OTHER'
+                    # Retener piezas claves, descartar 'OTHER'
                     drawn_hand.sort(
                         key=lambda c: 0
                         if getattr(c, "is_monolith", False)
@@ -261,13 +261,14 @@ class GameEngine:
         return has_monolith and self.state.zirda_on_battlefield and has_outlet
 
     def run_simulation(self, max_turns=2):
+        """Retorna tupla (éxito: bool, razón: str) esperada por main.py"""
         for turn in range(1, max_turns + 1):
             self.execute_turn(turn)
             if self.check_win():
-                return True
-        return False
+                return True, f"Combo completado en Turno {turn}"
+        return False, "No se completó el combo en Turno 2"
 
 
-# Aliases por compatibilidad con cualquier tipo de importación
+# Aliases por compatibilidad
 Game = GameEngine
 Engine = GameEngine
