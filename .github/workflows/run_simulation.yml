@@ -1,0 +1,23 @@
+name: Run Zirdabilities Simulation
+
+on:
+  push:
+    paths:
+      - 'decklist.txt'
+      - 'src/**'
+      - 'main.py'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Run Monte Carlo Simulation
+        run: python main.py
