@@ -3,7 +3,6 @@ from src.card import Card
 from src.database import get_card
 from src.deck import Deck
 
-# Mulligan discard priority (cards at the top of this list are discarded first)
 DISCARD_PRIORITY = [
     "OTHER",
     "Aurelia's Fury",
@@ -43,7 +42,7 @@ DISCARD_PRIORITY = [
 
 
 class GameEngine:
-    """Simulates a game state to test Turn 1 - Turn 3 combo execution."""
+    """Motor de simulación paso a paso para evaluar el combo de Zirda en Turno 2."""
 
     def __init__(self, deck: Deck, debug: bool = False):
         self.raw_deck = list(deck.get_cards())
@@ -74,36 +73,41 @@ class GameEngine:
 
         opening_7 = [deck_cards.pop() for _ in range(7)]
 
-        for mulligan_cnt in range(3):  # Max 2 mulligans (7, 6, 5)
+        for mulligan_cnt in range(3):
             self.log = []
             hand = self.apply_london_mulligan(list(opening_7), mulligan_cnt)
             board = []
             library = list(deck_cards)
 
-            self.trace(f"\n--- STARTING HAND (Mulligans: {mulligan_cnt}) ---")
-            self.trace(f"Hand: {[c.name for c in hand]}")
+            self.trace(f"\n--- INICIO DE PARTIDA (Mulligans: {mulligan_cnt}) ---")
+            self.trace(f"Mano Inicial: {[c.name for c in hand]}")
 
-            # --- PREGAME PHASE (Gemstone Caverns) ---
+            # --- FASE PREGAME ---
             gemstone = next(
                 (c for c in hand if c.name == "Gemstone Caverns"), None
             )
-            if gemstone and random.random() < 0.75:  # Assume off-play 75%
-                other = next((c for c in hand if c.role == "Other"), None)
+            if gemstone and random.random() < 0.75:
+                other = next(
+                    (
+                        c
+                        for c in hand
+                        if c.role == "Other" or c.name == "OTHER"
+                    ),
+                    None,
+                )
                 if other:
                     hand.remove(other)
                     hand.remove(gemstone)
                     board.append(gemstone)
                     self.trace(
-                        "Pregame: Gemstone Caverns active (exiled 1 card)"
+                        f"Pregame: Play Gemstone Caverns (Exilada {other.name})"
                     )
 
-            # --- TURN 1 PHASE ---
-            # Land Drop
-            lands = [c for c in hand if c.role == "Land"]
-            if lands:
-                # Prefer color land or Workshop
-                chosen_land = lands[0]
-                for l in lands:
+            # --- TURNO 1 (T1) ---
+            lands_t1 = [c for c in hand if c.role == "Land"]
+            if lands_t1:
+                chosen_land = lands_t1[0]
+                for l in lands_t1:
                     if l.name in [
                         "COLOR_LAND",
                         "Mishra's Workshop",
@@ -113,23 +117,41 @@ class GameEngine:
                         break
                 hand.remove(chosen_land)
                 board.append(chosen_land)
-                self.trace(f"T1 Land Drop: {chosen_land.name}")
+                self.trace(f"T1 Land Drop: Play {chosen_land.name}")
 
-            # --- TURN 2 PHASE ---
-            # Draw Step
+            # Acciones / Casts de T1
+            gamble = next((c for c in hand if c.name == "Gamble"), None)
+            if gamble:
+                has_red_t1 = any(
+                    c.name in ["COLOR_LAND", "Gemstone Caverns"] for c in board
+                )
+                if has_red_t1:
+                    hand.remove(gamble)
+                    grim = get_card("Grim Monolith")
+                    hand.append(grim)
+
+                    discarded = random.choice(hand)
+                    hand.remove(discarded)
+                    self.trace(
+                        f"T1 Action: Cast Gamble ({gamble.cost_pips}) -> Busca Grim Monolith y descarta al azar: {discarded.name}"
+                    )
+
+            # --- TURNO 2 (T2) ---
             if library:
                 drawn = library.pop()
                 hand.append(drawn)
-                self.trace(f"T2 Draw Step: Drew {drawn.name}")
+                self.trace(f"T2 Draw Step: Robada {drawn.name}")
 
-            # T2 Land Drop
             lands_t2 = [c for c in hand if c.role == "Land"]
             if lands_t2:
-                board.append(lands_t2[0])
-                hand.remove(lands_t2[0])
-                self.trace(f"T2 Land Drop: {lands_t2[0].name}")
+                chosen_t2 = lands_t2[0]
+                board.append(chosen_t2)
+                hand.remove(chosen_t2)
+                self.trace(f"T2 Land Drop: Play {chosen_t2.name}")
 
-            # --- T2 MANA POOL & EXECUTION SEQUENCER ---
+            self.trace(f"Mano al inicio de T2: {[c.name for c in hand]}")
+
+            # --- SECUENCIADOR Y CASTS DE T2 ---
             pool_r = sum(
                 1
                 for c in board
@@ -154,24 +176,23 @@ class GameEngine:
                 if c.name != "Mishra's Workshop"
             )
 
-            # 1. Ephemeral & Ritual Mana
+            # 1. Ephemeral & Fast Mana
             petal = next((c for c in hand if c.name == "Lotus Petal"), None)
             if petal:
                 hand.remove(petal)
                 pool_r += 1
-                self.trace("T2 Action: Played Lotus Petal (+1 Red/White)")
+                self.trace("T2 Action: Cast Lotus Petal (Coste: {0}) -> Sacrifica (+1 Mana Color)")
 
             ssg = next((c for c in hand if c.name == "Simian Spirit Guide"), None)
             if ssg:
                 hand.remove(ssg)
                 pool_r += 1
-                self.trace("T2 Action: Exiled Simian Spirit Guide (+1 Red)")
+                self.trace("T2 Action: Exile Simian Spirit Guide de la mano (+1 Rojo)")
 
-            # Ritual execution checks
+            # 2. Casts de Rituales
             seething = next((c for c in hand if c.name == "Seething Song"), None)
             if seething and pool_r >= 1 and (pool_r + pool_c) >= 3:
                 hand.remove(seething)
-                # Pay 2 generic + 1 Red
                 if pool_c >= 2:
                     pool_c -= 2
                     pool_r -= 1
@@ -180,9 +201,27 @@ class GameEngine:
                     pool_c = 0
                     pool_r -= 1 + rem
                 pool_r += 5
-                self.trace("T2 Action: Cast Seething Song (+5 Red)")
+                self.trace("T2 Action: Cast Seething Song (Coste: {2}{R}) -> Genera +5{R}")
 
-            # 2. Check Monolith Piece
+            pyretic = next(
+                (
+                    c
+                    for c in hand
+                    if c.name in ["Pyretic Ritual", "Desperate Ritual"]
+                ),
+                None,
+            )
+            if pyretic and pool_r >= 1 and (pool_r + pool_c) >= 2:
+                hand.remove(pyretic)
+                if pool_c >= 1:
+                    pool_c -= 1
+                    pool_r -= 1
+                else:
+                    pool_r -= 2
+                pool_r += 3
+                self.trace(f"T2 Action: Cast {pyretic.name} (Coste: {{1}}{{R}}) -> Genera +3{{R}}")
+
+            # 3. Casts de Monolito
             monolith_in_play = any(
                 c.name in ["Basalt Monolith", "Grim Monolith"] for c in board
             )
@@ -198,25 +237,37 @@ class GameEngine:
                     board.append(grim)
                     pool_c += 3
                     monolith_in_play = True
-                    self.trace("T2 Action: Cast & Tapped Grim Monolith")
+                    self.trace(
+                        "T2 Action: Cast Grim Monolith (Coste: {2}) -> Tapea para +3{C}"
+                    )
                 elif basalt and (pool_r + pool_c) >= 3:
                     hand.remove(basalt)
                     board.append(basalt)
                     pool_c += 3
                     monolith_in_play = True
-                    self.trace("T2 Action: Cast & Tapped Basalt Monolith")
+                    self.trace(
+                        "T2 Action: Cast Basalt Monolith (Coste: {3}) -> Tapea para +3{C}"
+                    )
 
-            # 3. Check Zirda Castability (Requires 2 Color Pips + 1 Generic)
+            # 4. Cast de Comandante (Zirda)
             zirda_ready = False
             if monolith_in_play and pool_r >= 2 and (pool_r + pool_c) >= 3:
                 zirda_ready = True
-                self.trace("T2 Action: Cast Zirda, the Dawnwaker")
+                self.trace("T2 Action: Cast Zirda, the Dawnwaker desde la Command Zone (Coste: {1}{R/W}{R/W})")
 
-            # 4. Check Outlet
-            has_outlet = any(c.role == "Outlet" for c in hand)
+            # 5. Cast de Rematador (Outlet)
+            outlet_card = next((c for c in hand if c.role == "Outlet"), None)
 
-            if zirda_ready and monolith_in_play and has_outlet:
-                self.trace("🏆 RESULT: TURN 2 VICTORY VALIDATED STEP-BY-STEP")
+            if zirda_ready and monolith_in_play and outlet_card:
+                self.trace(f"T2 Action: Cast {outlet_card.name} (Outlet) -> Ejecuta maná infinito con Monolito")
+                self.trace(f"Board State Final: {[c.name for c in board]}")
+                self.trace(f"Mano Restante: {[c.name for c in hand]}")
+                self.trace("🏆 RESULTADO: VICTORIA EN TURNO 2")
                 return True, f"T2 Win (Mulligan {mulligan_cnt})"
+
+            # Registro en caso de fallo
+            self.trace(f"Board State Final: {[c.name for c in board]}")
+            self.trace(f"Mano Restante: {[c.name for c in hand]}")
+            self.trace("❌ RESULTADO: FALLO EN TURNO 2")
 
         return False, "T2 Fail"
