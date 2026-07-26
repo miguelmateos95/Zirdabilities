@@ -1,94 +1,92 @@
+# ==============================================================================
+# SCRIPT PRINCIPAL DE SIMULACIÓN MONTE CARLO
+# ==============================================================================
+
 import time
 from src.deck import Deck
 from src.engine import GameEngine
 
 
-def run_monte_carlo(iterations: int = 100000):
+def run_monte_carlo(iterations=100000):
     print("=" * 65)
     print("🚀 ZIRDABILITIES: MONTE CARLO COMBO SIMULATOR")
     print("=" * 65)
 
-    # 1. Load Deck
     deck = Deck("decklist.txt")
-    if len(deck) == 0:
-        print("Error: Could not load decklist.txt. Please check the file.")
-        return
-
     print(f"Loaded Deck: {len(deck)} cards.")
     print(f"Running {iterations:,} simulated games...\n")
 
+    wins = 0
+    mulligan_counts = {0: 0, 1: 0, 2: 0}
+    mulligan_wins = {0: 0, 1: 0, 2: 0}
+
+    winning_samples = []
+    losing_samples = []
+
     start_time = time.time()
 
-    # Metrics Tracking
-    wins_total = 0
-    wins_by_mulligan = {0: 0, 1: 0, 2: 0}
-
-    # Lists to capture sample trace logs
-    winning_logs = []
-    losing_logs = []
-
-    # 2. Monte Carlo Execution Loop
-    for _ in range(iterations):
-        # We only record execution traces when we still need sample winning/losing logs
-        need_win = len(winning_logs) < 5
-        need_loss = len(losing_logs) < 5
-        record = need_win or need_loss
-
+    for i in range(iterations):
+        record = i < 5 or (iterations - i) <= 5
         engine = GameEngine(deck, debug=record)
-        success, reason = engine.run_simulation()
+        mulls = engine.mulligans
+        mulligan_counts[mulls] = mulligan_counts.get(mulls, 0) + 1
+
+        success, reason = engine.run_simulation(max_turns=2)
 
         if success:
-            wins_total += 1
-            if "Mulligan 0" in reason:
-                wins_by_mulligan[0] += 1
-            elif "Mulligan 1" in reason:
-                wins_by_mulligan[1] += 1
-            elif "Mulligan 2" in reason:
-                wins_by_mulligan[2] += 1
-
-            if need_win:
-                winning_logs.append(engine.log)
+            wins += 1
+            mulligan_wins[mulls] = mulligan_wins.get(mulls, 0) + 1
+            if len(winning_samples) < 5:
+                winning_samples.append((engine, i + 1, reason))
         else:
-            if need_loss:
-                losing_logs.append(engine.log)
+            if len(losing_samples) < 5:
+                losing_samples.append((engine, i + 1, reason))
 
-    elapsed = time.time() - start_time
+    elapsed_time = time.time() - start_time
 
-    # 3. Calculation & Metrics Output
-    win_rate_total = (wins_total / iterations) * 100
-    m0_rate = (wins_by_mulligan[0] / iterations) * 100
-    m1_rate = (wins_by_mulligan[1] / iterations) * 100
-    m2_rate = (wins_by_mulligan[2] / iterations) * 100
-
+    # Imprimir Resumen de Resultados
     print("=" * 65)
     print("📊 SIMULATION RESULTS SUMMARY")
     print("=" * 65)
     print(f"Total Iterations: {iterations:,}")
-    print(f"Execution Time  : {elapsed:.2f} seconds")
+    print(f"Execution Time  : {elapsed_time:.2f} seconds")
     print("-" * 65)
-    print(f"Overall T2 Win Rate: {win_rate_total:.2f}%\n")
+
+    win_rate = (wins / iterations) * 100
+    print(f"Overall T2 Win Rate: {win_rate:.2f}%\n")
+
     print("Breakdown by Mulligan Level:")
-    print(f"  • Hand of 7 (No Mulligan) : {m0_rate:.2f}%")
-    print(f"  • Hand of 6 (1 Mulligan)   : {m1_rate:.2f}%")
-    print(f"  • Hand of 5 (2 Mulligans)  : {m2_rate:.2f}%")
+    for m in range(3):
+        total_m = mulligan_counts.get(m, 0)
+        wins_m = mulligan_wins.get(m, 0)
+        rate_m = (wins_m / total_m * 100) if total_m > 0 else 0.0
+        label = "No Mulligan" if m == 0 else f"{m} Mulligan(s)"
+        print(f"  • Hand of {7 - m} ({label}) : {rate_m:.2f}% ({wins_m}/{total_m})")
+
     print("=" * 65)
 
-    # 4. Print 5 Sample Winning Games
-    print("\n" + "🟢 " * 10 + " 5 SAMPLE WINNING HANDS " + "🟢 " * 10)
-    for idx, log_trace in enumerate(winning_logs, 1):
-        print(f"\n--- [WINNING GAME #{idx}] ---")
-        for line in log_trace:
-            print(f"  {line}")
+    # Muestras de Ganadoras
+    print("\n🟢 5 SAMPLE WINNING HANDS 🟢\n")
+    for engine, idx, reason in winning_samples:
+        hand_names = [getattr(c, "name", str(c)) for c in engine.state.hand]
+        board_names = [getattr(c, "name", str(c)) for c in engine.state.battlefield]
+        print(f"--- [WINNING GAME #{idx}] ---")
+        print(f"  Mulligans: {engine.mulligans}")
+        print(f"  Mano Restante: {hand_names}")
+        print(f"  Board State Final: {board_names}")
+        print(f"  ✅ RESULTADO: {reason}\n")
 
-    # 5. Print 5 Sample Losing Games
-    print("\n" + "🔴 " * 10 + " 5 SAMPLE LOSING HANDS " + "🔴 " * 10)
-    for idx, log_trace in enumerate(losing_logs, 1):
-        print(f"\n--- [LOSING GAME #{idx}] ---")
-        for line in log_trace:
-            print(f"  {line}")
-
-    print("\n" + "=" * 65)
+    # Muestras de Perdedoras
+    print("\n🔴 5 SAMPLE LOSING HANDS 🔴\n")
+    for engine, idx, reason in losing_samples:
+        hand_names = [getattr(c, "name", str(c)) for c in engine.state.hand]
+        board_names = [getattr(c, "name", str(c)) for c in engine.state.battlefield]
+        print(f"--- [LOSING GAME #{idx}] ---")
+        print(f"  Mulligans: {engine.mulligans}")
+        print(f"  Mano Restante: {hand_names}")
+        print(f"  Board State Final: {board_names}")
+        print(f"  ❌ RESULTADO: {reason}\n")
 
 
 if __name__ == "__main__":
-    run_monte_carlo(iterations=100000)
+    run_monte_carlo(100000)
